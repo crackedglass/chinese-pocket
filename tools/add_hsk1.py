@@ -1,9 +1,12 @@
-import os
-import sys
 from pathlib import Path
 import time
+import os
+import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+for candidate in (Path(__file__).resolve().parents[2], Path("/opt")):
+    if (candidate / "chinese_bot" / "store.py").exists():
+        sys.path.insert(0, str(candidate))
+        break
 from chinese_bot.store import Store
 
 OWNER_ID = 842863036
