@@ -1,0 +1,5 @@
+app: chinese-miniapp
+env: production
+visibility: public
+domain: chinese.qlgn.space
+port: 8000

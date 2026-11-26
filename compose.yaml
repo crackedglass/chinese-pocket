@@ -1,0 +1,19 @@
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    environment:
+      BOT_DB_PATH: /data/vocabulary.sqlite3
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      APP_SECRET: ${APP_SECRET}
+      WEBAPP_URL: https://chinese.qlgn.space
+    volumes:
+      - chinese_data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  chinese_data:
