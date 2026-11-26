@@ -14,11 +14,10 @@ See `proposal.md` for motivation. The current bot polls Telegram with `getUpdate
 - Add a confirmation boundary between OCR output and persistence.
 - Make imports retryable and duplicate-safe.
 
-**Non-Goals:**
+- **Non-Goals:**
 
 - Replacing long polling with webhooks.
 - Full OCR accuracy improvement or machine translation.
-- Merging the Mini App's `user_words` table with the bot's vocabulary in this change.
 - Supporting arbitrary group permissions or anonymous admin identity beyond what Telegram exposes.
 
 ## Decisions
@@ -26,11 +25,14 @@ See `proposal.md` for motivation. The current bot polls Telegram with `getUpdate
 ### Update routing
 Accept `channel_post` in `allowed_updates` and dispatch it separately from private `message` updates. Channel posts have no normal sender identity, so configuration commands in channels must be authorized by resolving the channel administrator through Telegram's administrator API and matching the command actor when Telegram provides one. If actor identity is unavailable, channel configuration uses a private-admin setup flow rather than trusting a channel post.
 
+### Dictionary ownership and legacy migration
+The legacy bot-wide vocabulary will be discarded rather than migrated. The Mini App's existing user words will be migrated into each user's personal dictionary, and existing channel links will be disabled until an owner links them to a dictionary. Keep the old bot vocabulary table empty and prevent old `/add` and `/list` code paths from recreating it.
+
 ### Channel persistence
-Add channel-scoped records keyed by Telegram `chat_id`, with enabled state and review settings. Add a vocabulary ownership key to new channel rows rather than reusing the global private-chat table. Keep existing private-chat behavior unchanged and migrate no existing rows destructively.
+Store channel enrollment separately from its target dictionary. A channel is enabled only after a channel administrator confirms the link and the acting user owns the target dictionary. The linked dictionary ID is the only vocabulary scope used for channel imports and channel-published reviews.
 
 ### Image import state machine
-Represent an import as `pending`, `confirmed`, or `rejected`, keyed by an opaque confirmation token and its owner scope. OCR creates a preview only; confirmation performs one transaction that marks the import confirmed and inserts rows with a uniqueness constraint. Expire pending imports after a short configurable period.
+Represent an import as `pending`, `confirmed`, or `rejected`, keyed by an opaque confirmation token and the dictionary scope. Private-chat imports default to the sender's personal dictionary; channel imports use the channel's linked dictionary. OCR creates a preview only; confirmation verifies the actor is a dictionary member (and, for channel imports, a channel admin) and performs one transaction that marks the import confirmed and inserts rows with a uniqueness constraint. Expire pending imports after 15 minutes.
 
 ### OCR boundary
 Keep image download limits in the Telegram client. Normalize OCR output into candidate lines, then run the existing strict `parse_words` validation. The bot reports invalid lines in the preview rather than silently coercing uncertain text. A later OCR provider can replace the extraction implementation without changing the confirmation contract.
@@ -47,12 +49,12 @@ The first version supports one vocabulary item per line in the format `汉字 | 
 - **[Risk]** OCR can produce plausible but incorrect pinyin or translation → **Mitigation:** mandatory preview and confirmation; no automatic persistence.
 - **[Risk]** SQLite write contention between web and bot services → **Mitigation:** short transactions, WAL mode, and indexes; keep import work outside the write transaction.
 - **[Risk]** Existing Docker image does not include OCR binaries or language data → **Mitigation:** make OCR dependencies explicit in the image and add a startup/health check before enabling image imports.
-- **[Risk]** Channel data can leak through global review queries → **Mitigation:** require an explicit owner scope on every channel query and add cross-channel isolation tests.
+- **[Risk]** Migration deletes old bot-global words → **Mitigation:** run once under the explicit approved destructive migration, retain Mini App personal words, and verify preserved/deleted row counts.
 
 ## Migration Plan
 
 1. Add additive SQLite tables, indexes, and nullable ownership fields; preserve existing private vocabulary.
 2. Add routing and import tests before enabling channel configuration.
-3. Build the bot image with the required OCR runtime and deploy as a rolling Compose update.
+3. Rebuild the bot image with the OCR runtime and deploy after tests pass; the database migration deletes global bot words once and should be backed up before production rollout.
 4. Enable a channel explicitly and test with a non-sensitive image.
 5. Roll back by disabling channel enrollment and reverting the image; additive tables can remain unused without affecting existing private chats.

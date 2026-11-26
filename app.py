@@ -25,11 +25,39 @@ class WordIn(BaseModel):
     pinyin: str
     translation: str
 
+class DictionaryIn(BaseModel):
+    name: str
+
+class SelectDictionaryIn(BaseModel):
+    dictionary_id: int
+
+class InviteIn(BaseModel):
+    dictionary_id: int
+
+class RedeemIn(BaseModel):
+    code: str
+
+class RemoveMemberIn(BaseModel):
+    dictionary_id: int
+    telegram_id: int
+
+class ChannelLinkIn(BaseModel):
+    channel_id: int
+    dictionary_id: int
+
 
 def db():
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("""CREATE TABLE IF NOT EXISTS words (
+        id INTEGER PRIMARY KEY, hanzi TEXT NOT NULL, pinyin TEXT NOT NULL,
+        translation TEXT NOT NULL, UNIQUE(hanzi,pinyin,translation))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY, value TEXT NOT NULL)""")
+    conn.execute("INSERT OR IGNORE INTO settings VALUES ('time','09:00'),('zone','UTC')")
+    conn.execute("""CREATE TABLE IF NOT EXISTS chats (
+        id INTEGER PRIMARY KEY, subscribed INTEGER NOT NULL DEFAULT 0, mode TEXT, last_review TEXT)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS users (
         telegram_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, last_name TEXT,
         created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL
@@ -39,6 +67,8 @@ def db():
         pinyin TEXT NOT NULL, translation TEXT NOT NULL, created_at INTEGER NOT NULL,
         UNIQUE(telegram_id, hanzi, pinyin, translation)
     )""")
+    from .store import init_dictionary_schema
+    init_dictionary_schema(conn)
     conn.commit()
     return conn
 
@@ -107,6 +137,8 @@ def auth(payload: dict[str, str], response: Response):
             VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(telegram_id) DO UPDATE SET
             username=excluded.username, first_name=excluded.first_name, last_name=excluded.last_name, last_seen=excluded.last_seen""",
             (user["id"], user.get("username", ""), user.get("first_name", ""), user.get("last_name", ""), now, now))
+    from .store import Store
+    Store(DB_PATH).personal_dictionary(user["id"])
     response.set_cookie("session", make_session(user), httponly=True, secure=True, samesite="lax", max_age=604800)
     return {"user": user}
 
@@ -120,16 +152,124 @@ def logout(response: Response):
 @app.get("/api/me")
 def me(session: str | None = Cookie(default=None)):
     user = current_user(session)
+    from .store import Store
+    store = Store(DB_PATH)
+    store.personal_dictionary(user["id"])
+    dictionaries = store.dictionaries_for(user["id"])
+    selected = store.selected_dictionary(user["id"])
     with db() as conn:
-        total = conn.execute("SELECT COUNT(*) FROM user_words WHERE telegram_id = ?", (user["id"],)).fetchone()[0]
-    return {"user": user, "total": total}
+        total = conn.execute("SELECT COUNT(*) FROM dictionary_words WHERE dictionary_id = ?", (selected,)).fetchone()[0]
+    return {"user": user, "total": total, "dictionary_id": selected,
+            "dictionaries": [dict(row) for row in dictionaries]}
+
+
+def require_dictionary_member(conn, dictionary_id, user_id, owner=False):
+    row = conn.execute("SELECT role FROM dictionary_members WHERE dictionary_id=? AND telegram_id=?",
+                       (dictionary_id, user_id)).fetchone()
+    if not row or (owner and row["role"] != "owner"):
+        raise HTTPException(403, "Нет доступа к словарю")
+    return row["role"]
+
+
+@app.get("/api/dictionaries")
+def list_dictionaries(session: str | None = Cookie(default=None)):
+    user = current_user(session)
+    from .store import Store
+    store = Store(DB_PATH)
+    store.personal_dictionary(user["id"])
+    return {"selected": store.selected_dictionary(user["id"]),
+            "dictionaries": [dict(row) for row in store.dictionaries_for(user["id"])]}
+
+
+@app.post("/api/dictionaries")
+def create_dictionary(payload: DictionaryIn, session: str | None = Cookie(default=None)):
+    user = current_user(session)
+    name = payload.name.strip()
+    if not name or len(name) > 80:
+        raise HTTPException(400, "Название должно быть от 1 до 80 символов")
+    from .store import Store
+    dictionary_id = Store(DB_PATH).create_dictionary(user["id"], name)
+    return {"dictionary_id": dictionary_id, "name": name}
+
+
+@app.post("/api/dictionaries/select")
+def select_dictionary(payload: SelectDictionaryIn, session: str | None = Cookie(default=None)):
+    user = current_user(session)
+    from .store import Store
+    if not Store(DB_PATH).select_dictionary(user["id"], payload.dictionary_id):
+        raise HTTPException(403, "Нет доступа к словарю")
+    return {"selected": payload.dictionary_id}
+
+
+@app.post("/api/dictionaries/invite")
+def create_invite(payload: InviteIn, session: str | None = Cookie(default=None)):
+    user = current_user(session)
+    code = secrets.token_urlsafe(9)
+    from .store import Store
+    if not Store(DB_PATH).create_invite(payload.dictionary_id, user["id"], code, int(time.time()) + 7 * 86400):
+        raise HTTPException(403, "Приглашения может создавать только владелец")
+    return {"code": code, "expires_at": int(time.time()) + 7 * 86400}
+
+
+@app.post("/api/dictionaries/redeem")
+def redeem_invite(payload: RedeemIn, session: str | None = Cookie(default=None)):
+    user = current_user(session)
+    from .store import Store
+    dictionary_id = Store(DB_PATH).redeem_invite(payload.code.strip(), user["id"])
+    if not dictionary_id:
+        raise HTTPException(400, "Код недействителен, просрочен или уже использован")
+    return {"dictionary_id": dictionary_id}
+
+
+@app.delete("/api/dictionaries/members")
+def remove_member(payload: RemoveMemberIn, session: str | None = Cookie(default=None)):
+    user = current_user(session)
+    from .store import Store
+    if not Store(DB_PATH).remove_member(payload.dictionary_id, user["id"], payload.telegram_id):
+        raise HTTPException(403, "Удалить участника может только владелец")
+    return {"ok": True}
+
+
+@app.post("/api/channels/link")
+def link_channel(payload: ChannelLinkIn, session: str | None = Cookie(default=None)):
+    user = current_user(session)
+    with db() as conn:
+        require_dictionary_member(conn, payload.dictionary_id, user["id"], owner=True)
+    if not BOT_TOKEN:
+        raise HTTPException(503, "Telegram bot is not configured")
+    from .telegram import Telegram
+    api = Telegram(BOT_TOKEN)
+    if not api.is_channel_admin(payload.channel_id, user["id"]):
+        raise HTTPException(403, "Подключить канал может только его администратор")
+    bot = api.call("getMe")
+    if not api.is_channel_admin(payload.channel_id, bot["id"]):
+        raise HTTPException(400, "Сначала добавьте бота в канал администратором")
+    info = api.call("getChat", chat_id=payload.channel_id)
+    from .store import Store
+    Store(DB_PATH).link_channel(payload.channel_id, info.get("title", ""), payload.dictionary_id, True)
+    return {"channel_id": payload.channel_id, "dictionary_id": payload.dictionary_id, "enabled": True}
+
+
+@app.post("/api/channels/unlink")
+def unlink_channel(payload: ChannelLinkIn, session: str | None = Cookie(default=None)):
+    user = current_user(session)
+    with db() as conn:
+        require_dictionary_member(conn, payload.dictionary_id, user["id"], owner=True)
+        row = conn.execute("SELECT dictionary_id FROM channel_links WHERE channel_id=?", (payload.channel_id,)).fetchone()
+        if not row or row["dictionary_id"] != payload.dictionary_id:
+            raise HTTPException(404, "Канал не связан с этим словарём")
+    from .store import Store
+    Store(DB_PATH).unlink_channel(payload.channel_id)
+    return {"ok": True}
 
 
 @app.get("/api/words")
 def words(session: str | None = Cookie(default=None)):
     user = current_user(session)
     with db() as conn:
-        rows = conn.execute("SELECT id, hanzi, pinyin, translation FROM user_words WHERE telegram_id=? ORDER BY id DESC LIMIT 100", (user["id"],)).fetchall()
+        dictionary_id = conn.execute("SELECT selected_dictionary_id FROM users WHERE telegram_id=?", (user["id"],)).fetchone()[0]
+        require_dictionary_member(conn, dictionary_id, user["id"])
+        rows = conn.execute("SELECT id, hanzi, pinyin, translation FROM dictionary_words WHERE dictionary_id=? ORDER BY id DESC LIMIT 100", (dictionary_id,)).fetchall()
     return {"words": [dict(row) for row in rows]}
 
 
@@ -140,8 +280,10 @@ def add_word(word: WordIn, session: str | None = Cookie(default=None)):
     if not all(values) or len(values[0]) > 40 or len(values[1]) > 80 or len(values[2]) > 150:
         raise HTTPException(400, "Заполните все поля")
     with db() as conn:
-        cur = conn.execute("INSERT OR IGNORE INTO user_words(telegram_id, hanzi, pinyin, translation, created_at) VALUES (?, ?, ?, ?, ?)", (user["id"], *values, int(time.time())))
-        row = conn.execute("SELECT id, hanzi, pinyin, translation FROM user_words WHERE telegram_id=? AND hanzi=? AND pinyin=? AND translation=?", (user["id"], *values)).fetchone()
+        dictionary_id = conn.execute("SELECT selected_dictionary_id FROM users WHERE telegram_id=?", (user["id"],)).fetchone()[0]
+        require_dictionary_member(conn, dictionary_id, user["id"])
+        cur = conn.execute("INSERT OR IGNORE INTO dictionary_words(dictionary_id,hanzi,pinyin,translation) VALUES (?,?,?,?)", (dictionary_id, *values))
+        row = conn.execute("SELECT id,hanzi,pinyin,translation FROM dictionary_words WHERE dictionary_id=? AND hanzi=? AND pinyin=? AND translation=?", (dictionary_id, *values)).fetchone()
     return {"word": dict(row), "created": cur.rowcount == 1}
 
 
@@ -149,5 +291,7 @@ def add_word(word: WordIn, session: str | None = Cookie(default=None)):
 def review(session: str | None = Cookie(default=None)):
     user = current_user(session)
     with db() as conn:
-        rows = conn.execute("SELECT id, hanzi, pinyin, translation FROM user_words WHERE telegram_id=? ORDER BY random() LIMIT 5", (user["id"],)).fetchall()
+        dictionary_id = conn.execute("SELECT selected_dictionary_id FROM users WHERE telegram_id=?", (user["id"],)).fetchone()[0]
+        require_dictionary_member(conn, dictionary_id, user["id"])
+        rows = conn.execute("SELECT id,hanzi,pinyin,translation FROM dictionary_words WHERE dictionary_id=? ORDER BY random() LIMIT 5", (dictionary_id,)).fetchall()
     return {"words": [dict(row) for row in rows]}

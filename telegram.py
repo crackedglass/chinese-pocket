@@ -57,6 +57,19 @@ class Telegram:
     def voice(self, file_id):
         return self._download(file_id, MAX_VOICE_BYTES)
 
+    def is_channel_admin(self, channel_id, user_id):
+        try:
+            member = self.call("getChatMember", chat_id=channel_id, user_id=user_id)
+            return member.get("status") in {"creator", "administrator"}
+        except TelegramError:
+            return False
+
+    def channel_admins(self, channel_id):
+        try:
+            return self.call("getChatAdministrators", chat_id=channel_id)
+        except TelegramError:
+            return []
+
     def _download(self, file_id, limit):
         file = self.call("getFile", file_id=file_id)
         if file.get("file_size", 0) > limit or not file.get("file_path"):

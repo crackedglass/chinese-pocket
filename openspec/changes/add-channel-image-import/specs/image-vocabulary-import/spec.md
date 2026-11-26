@@ -33,16 +33,21 @@ The system SHALL extract candidate rows containing Chinese text, pinyin, and tra
 - **THEN** the bot reports that no importable vocabulary was found and stores no rows
 
 ### Requirement: Import confirmation is scoped and idempotent
-The system SHALL save only confirmed candidates in the originating user's or channel's vocabulary scope and SHALL not create duplicate entries when the same import is confirmed more than once.
+The system SHALL save only confirmed candidates to the selected dictionary and SHALL not create duplicate entries when the same import is confirmed more than once.
 
-#### Scenario: User confirms import
-- **GIVEN** a pending preview belongs to the current user or enabled channel
-- **WHEN** the user or authorized channel administrator confirms it
-- **THEN** valid candidates are saved in that scope and a count is returned
+#### Scenario: Private user confirms import
+- **GIVEN** a pending preview belongs to the current user and their personal dictionary
+- **WHEN** the user confirms it before expiry
+- **THEN** valid candidates are saved in that personal dictionary and a count is returned
+
+#### Scenario: Channel administrator confirms import
+- **GIVEN** a pending preview belongs to the dictionary linked to an enabled channel
+- **WHEN** a verified channel administrator confirms it
+- **THEN** valid candidates are saved in the linked dictionary and a count is returned
 
 #### Scenario: Unauthorized confirmation
-- **GIVEN** a pending preview belongs to another scope
-- **WHEN** an unauthorized actor attempts confirmation
+- **GIVEN** a pending preview belongs to a dictionary the actor cannot access
+- **WHEN** the actor attempts confirmation
 - **THEN** the confirmation is rejected and no vocabulary is changed
 
 #### Scenario: Duplicate confirmation

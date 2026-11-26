@@ -6,19 +6,21 @@ The current bot works in private chats, but it cannot be added to Telegram chann
 
 ## What Changes
 
-- Add support for receiving messages from Telegram channels where the bot is an administrator.
-- Allow channel administrators to configure a channel for vocabulary publishing and review notifications.
-- Process vocabulary images sent to the bot or an enabled channel.
-- Extract Chinese terms and their translations from images, show a confirmation preview, and save only confirmed rows.
-- Preserve the existing private-chat commands and Mini App behavior.
+- Add a personal vocabulary dictionary for every Telegram user and support creating shared dictionaries.
+- Allow owners to invite participants with a one-time code; members can add and review words while only owners manage membership.
+- Link an enabled Telegram channel to a selected dictionary so channel imports and reviews use that dictionary.
+- Process vocabulary images sent privately or to an enabled channel.
+- Extract rows in `汉字 | pinyin | translation` format, show a confirmation preview, and save only confirmed rows to the selected dictionary.
+- Preserve existing private-chat commands and existing vocabulary during migration.
 - Reject unsupported or low-confidence image input with an actionable error instead of silently saving incorrect words.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `telegram-channel-integration`: Receive and process channel posts, authorize bot administration, and manage per-channel settings and notifications.
-- `image-vocabulary-import`: Extract vocabulary rows from images, validate and preview them, and persist confirmed words.
+- `shared-vocabulary`: Personal and shared dictionaries, owner-managed memberships, invite codes, and dictionary-scoped words. Old bot-global vocabulary is discarded; Mini App personal words are migrated.
+- `telegram-channel-integration`: Receive and process channel posts, authorize channel administration, and connect an enabled channel to a dictionary.
+- `image-vocabulary-import`: Extract vocabulary rows from images, validate and preview them, and persist confirmed words in a dictionary.
 
 ### Modified Capabilities
 

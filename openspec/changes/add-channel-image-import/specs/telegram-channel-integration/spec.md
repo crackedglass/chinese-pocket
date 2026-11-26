@@ -6,41 +6,36 @@ Lets channel administrators use the Chinese vocabulary bot in Telegram channels 
 
 ## ADDED Requirements
 
-### Requirement: Bot processes authorized channel posts
-The system SHALL process supported channel posts only when the bot is an administrator of the channel and the channel is enabled for the bot.
+### Requirement: Channel administrators link an enabled channel to a dictionary
+The system SHALL allow an authenticated administrator of a Telegram channel to link that channel to a dictionary they own and SHALL reject linking actions from non-administrators or non-owners.
+
+#### Scenario: Channel administrator enables linked dictionary
+- **GIVEN** the bot is an administrator in the channel and the acting user owns the selected dictionary
+- **WHEN** they enable the channel and select that dictionary
+- **THEN** the channel is linked to that dictionary and the bot confirms the configuration
+
+#### Scenario: Non-administrator or non-owner attempts linking
+- **GIVEN** the user is not a channel administrator or does not own the selected dictionary
+- **WHEN** they attempt to link the channel
+- **THEN** the system rejects the operation and leaves channel settings unchanged
+
+### Requirement: Channel posts use the linked dictionary
+The system SHALL process vocabulary imports and reviews in an enabled channel using only the dictionary linked to that channel.
 
 #### Scenario: Enabled channel post is handled
-- **GIVEN** the bot is an administrator and the channel is enabled
+- **GIVEN** the channel is enabled and linked to a dictionary
 - **WHEN** a supported channel post arrives
-- **THEN** the bot processes it using that channel's configuration
+- **THEN** the bot processes it using the linked dictionary
 
-#### Scenario: Non-enabled channel post is ignored
-- **GIVEN** the channel is not enabled for the bot
+#### Scenario: Non-enabled or unlinked channel post is ignored
+- **GIVEN** the channel is not enabled or has no linked dictionary
 - **WHEN** a channel post arrives
-- **THEN** the bot does not save vocabulary or publish a reply
+- **THEN** the bot does not save vocabulary or publish a review
 
-### Requirement: Channel administrators control channel enrollment
-The system SHALL allow a channel administrator to enable or disable the bot for that channel and SHALL reject configuration changes from non-administrators.
+### Requirement: Channel access can be revoked
+The system SHALL disable a channel link when an authorized administrator disables it or when the bot loses administrator status.
 
-#### Scenario: Administrator enables channel
-- **GIVEN** the sender is a channel administrator
-- **WHEN** they enable the bot in the channel
-- **THEN** the channel is recorded as enabled and the bot confirms the configuration
-
-#### Scenario: Non-administrator attempts configuration
-- **GIVEN** the sender is not a channel administrator
-- **WHEN** they attempt to change channel settings
-- **THEN** the bot rejects the request and leaves channel settings unchanged
-
-### Requirement: Channel data is isolated
-The system SHALL associate channel vocabulary and settings with the originating channel and SHALL not mix them with another channel's or private user's vocabulary.
-
-#### Scenario: Channel vocabulary lookup
-- **GIVEN** two enabled channels have different vocabulary
-- **WHEN** a review is requested in one channel
-- **THEN** only that channel's vocabulary is used
-
-#### Scenario: Channel disabled
-- **GIVEN** an enabled channel is disabled
-- **WHEN** later channel posts arrive
-- **THEN** those posts are ignored and no scheduled channel review is sent
+#### Scenario: Channel disabled or bot removed
+- **GIVEN** an enabled channel link exists
+- **WHEN** an administrator disables it or the bot loses channel administrator status
+- **THEN** later posts and scheduled reviews are ignored for that channel

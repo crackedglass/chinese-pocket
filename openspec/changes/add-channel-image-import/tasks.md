@@ -1,21 +1,26 @@
 # Tasks
 
-## 1. Channel data model and authorization
+## 1. Dictionary data model and migration
 
-- [ ] 1.1 Add channel enrollment/settings and channel-owned vocabulary tables with indexes; verify migrations preserve existing private word/chat rows and cover isolated channel reads.
-- [ ] 1.2 Add Telegram update routing for channel posts and administrator verification; verify tests accept only enabled channels and reject non-admin configuration changes.
-- [ ] 1.3 Add explicit channel enable/disable setup flow and command help; verify admin can enable/disable and disabled channels have no bot responses.
-- [ ] 1.4 Add channel-scoped review publishing directly to the channel; verify scheduled review contains only the selected channel's vocabulary.
+- [x] 1.1 Add dictionaries, members, one-time invite codes, dictionary words, and channel-to-dictionary tables with indexes; verify existing Mini App rows are preserved and old bot-global words are discarded.
+- [x] 1.2 Add authenticated dictionary APIs for listing, creating, selecting, and reading dictionaries; verify non-members cannot access shared words.
+- [x] 1.3 Add owner-issued invite redemption and owner-only member removal; verify codes are single-use and non-owners cannot manage membership.
 
-## 2. Image vocabulary import
+## 2. Telegram channel integration
 
-- [ ] 2.1 Add bounded OCR extraction and one-row-per-line parser for `汉字 | pinyin | translation`; verify valid, malformed, empty, oversized, and OCR-failure fixtures.
-- [ ] 2.2 Add pending import previews with confirm/cancel actions scoped to initiating user or channel; verify no candidate is persisted before confirmation.
-- [ ] 2.3 Implement transactional, idempotent confirmation and expiry of pending imports; verify repeat confirmation creates no duplicates and unauthorized confirmation changes nothing.
-- [ ] 2.4 Add Telegram image-import help text and usage examples; verify documented format matches parser behavior.
+- [ ] 2.1 Route channel posts and bot membership updates; verify only enabled channels linked to a dictionary process content.
+- [ ] 2.2 Add authenticated channel link/unlink setup requiring channel administrator and dictionary-owner checks; verify unauthorized link attempts do not change state.
+- [ ] 2.3 Add channel-scoped import and review publishing from the linked dictionary; verify channel content does not mix words from another dictionary.
 
-## 3. Packaging and integration verification
+## 3. Image vocabulary import
 
-- [ ] 3.1 Add required OCR executable and Chinese language data to the bot image; verify image build and an OCR smoke test in the built container.
-- [ ] 3.2 Add regression coverage for private `/start`, `/add`, `/list`, existing image import flow, plus channel posts; verify existing private-chat behavior remains unchanged.
-- [ ] 3.3 Run the complete test suite and Compose validation; verify deployment health and end-to-end channel setup/import/review using a test channel.
+- [ ] 3.1 Add bounded OCR extraction and one-row-per-line parser for `汉字 | pinyin | translation`; verify valid, malformed, empty, oversized, and OCR-failure fixtures.
+- [ ] 3.2 Add pending previews and confirm/cancel flow defaulting private imports to the user's personal dictionary and channel imports to the linked dictionary; verify nothing is saved before confirmation.
+- [ ] 3.3 Implement transactional idempotent confirmation, membership/administrator authorization, and 15-minute expiry; verify repeat, unauthorized, and expired confirmations change no data.
+- [ ] 3.4 Add Telegram help text and image-import examples; verify documented commands and format match the implementation.
+
+## 4. Packaging and integration verification
+
+- [ ] 4.1 Add required OCR executable and Chinese language data to the bot image; verify image build and OCR smoke test in the built container.
+- [ ] 4.2 Add regression tests for existing private commands, migrations, dictionary sharing/permissions, channel routing, and image imports; verify legacy behavior is retained.
+- [ ] 4.3 Run the full test suite and Compose validation; verify deployment health and end-to-end test-channel invite, link, image import, and review flows.
