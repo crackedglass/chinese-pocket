@@ -1,6 +1,9 @@
 import re
 import sqlite3
 import json
+import os
+import tempfile
+import fcntl
 import time as system_time
 from contextlib import contextmanager
 from datetime import time as clock_time
@@ -40,6 +43,15 @@ def parse_schedule(text):
 
 
 def init_dictionary_schema(db):
+    # Serialize across independent bot/web processes sharing the persistent SQLite volume.
+    database_path = db.execute("PRAGMA database_list").fetchone()[2]
+    lock_path = database_path + ".dictionary-migration.lock"
+    with open(lock_path, "a") as migration_lock:
+        fcntl.flock(migration_lock.fileno(), fcntl.LOCK_EX)
+        _init_dictionary_schema_locked(db)
+
+
+def _init_dictionary_schema_locked(db):
     db.executescript("""
         CREATE TABLE IF NOT EXISTS dictionaries (
             id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('personal','shared')),
@@ -99,7 +111,16 @@ def init_dictionary_schema(db):
     columns = {row[1] for row in db.execute("PRAGMA table_info(users)")}
     if columns and "selected_dictionary_id" not in columns:
         db.execute("ALTER TABLE users ADD COLUMN selected_dictionary_id INTEGER")
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS app_migrations (
+            migration TEXT PRIMARY KEY, applied_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+        );
+    """)
     migration_done = db.execute("SELECT 1 FROM app_migrations WHERE migration='dictionary-v1'").fetchone()
+    legacy_cleanup_done = db.execute("SELECT 1 FROM app_migrations WHERE migration='discard-legacy-v2'").fetchone()
+    if not legacy_cleanup_done:
+        create_pre_migration_backup(db)
+
     # Old bot-global words and channel vocabularies are intentionally discarded exactly once.
     # Mini App personal words are migrated into the corresponding personal dictionaries below.
     for channel in db.execute("SELECT id,title,last_review FROM channels").fetchall():
@@ -130,6 +151,42 @@ def init_dictionary_schema(db):
                            (dictionary_id, user_id))
     if not migration_done:
         db.execute("INSERT INTO app_migrations(migration) VALUES ('dictionary-v1')")
+    if not legacy_cleanup_done:
+        db.execute("UPDATE channel_links SET enabled=0,dictionary_id=NULL WHERE dictionary_id IN (SELECT id FROM dictionaries WHERE kind='legacy')")
+        db.execute("DELETE FROM imports WHERE dictionary_id IN (SELECT id FROM dictionaries WHERE kind='legacy') OR dictionary_id IS NULL")
+        db.execute("DELETE FROM dictionary_words WHERE dictionary_id IN (SELECT id FROM dictionaries WHERE kind='legacy')")
+        db.execute("DELETE FROM dictionaries WHERE kind='legacy'")
+        db.execute("INSERT INTO app_migrations(migration) VALUES ('discard-legacy-v2')")
+
+
+def create_pre_migration_backup(db):
+    database_path = db.execute("PRAGMA database_list").fetchone()[2]
+    if not database_path:
+        return None
+    backup_path = Path(database_path + ".pre-dictionary-v1.sqlite3")
+    if backup_path.exists():
+        os.chmod(backup_path, 0o600)
+        with sqlite3.connect(backup_path) as backup:
+            result = backup.execute("PRAGMA integrity_check").fetchone()
+            if not result or result[0] != "ok":
+                raise RuntimeError("Existing pre-migration backup is not valid")
+        return backup_path
+    fd, temporary = tempfile.mkstemp(prefix=backup_path.name + ".", suffix=".tmp", dir=backup_path.parent)
+    os.close(fd)
+    try:
+        with sqlite3.connect(temporary) as target:
+            db.backup(target)
+            result = target.execute("PRAGMA integrity_check").fetchone()
+            if not result or result[0] != "ok":
+                raise RuntimeError("Could not verify pre-migration backup")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, backup_path)
+        os.chmod(backup_path, 0o600)
+        return backup_path
+    except Exception:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+        db.execute("UPDATE channel_links SET enabled=0 WHERE dictionary_id IS NULL")
 
 
 class Store:
@@ -236,6 +293,15 @@ class Store:
             db.execute("UPDATE dictionary_invites SET redeemed_by=? WHERE code=? AND redeemed_by IS NULL", (user_id, code))
             return invite["dictionary_id"]
 
+    def members(self, dictionary_id, requester_id):
+        with self.connect() as db:
+            if not db.execute("SELECT 1 FROM dictionary_members WHERE dictionary_id=? AND telegram_id=?", (dictionary_id, requester_id)).fetchone():
+                return None
+            return db.execute("""SELECT u.telegram_id,u.username,u.first_name,u.last_name,m.role
+                FROM dictionary_members m JOIN users u ON u.telegram_id=m.telegram_id
+                WHERE m.dictionary_id=? ORDER BY CASE m.role WHEN 'owner' THEN 0 ELSE 1 END,u.telegram_id""",
+                              (dictionary_id,)).fetchall()
+
     def remove_member(self, dictionary_id, owner_id, user_id):
         with self.connect() as db:
             if self.dictionary_role(dictionary_id, owner_id) != "owner" or owner_id == user_id:
@@ -270,6 +336,14 @@ class Store:
     def unlink_channel(self, channel_id):
         with self.connect() as db:
             db.execute("UPDATE channel_links SET enabled=0 WHERE channel_id=?", (channel_id,))
+
+    def linked_channels_for_owner(self, telegram_id):
+        with self.connect() as db:
+            return db.execute("""SELECT c.channel_id,c.title,c.dictionary_id,d.name AS dictionary_name,c.enabled
+                FROM channel_links c JOIN dictionaries d ON d.id=c.dictionary_id
+                JOIN dictionary_members m ON m.dictionary_id=d.id
+                WHERE m.telegram_id=? AND m.role='owner' AND c.dictionary_id IS NOT NULL
+                ORDER BY c.channel_id""", (telegram_id,)).fetchall()
 
     def dictionary_words(self, dictionary_id, *, review=False):
         with self.connect() as db:
@@ -342,8 +416,8 @@ class Store:
                     return False
                 db.execute("UPDATE channel_links SET title=?,enabled=1 WHERE channel_id=?", (title, channel_id))
             else:
-                db.execute("INSERT INTO channel_links(channel_id,title,dictionary_id,enabled) VALUES (?,?,NULL,0) "
-                           "ON CONFLICT(channel_id) DO UPDATE SET title=excluded.title,enabled=0", (channel_id,title))
+                db.execute("""INSERT INTO channel_links(channel_id,title,dictionary_id,enabled) VALUES (?,?,NULL,0)
+                    ON CONFLICT(channel_id) DO UPDATE SET title=excluded.title,enabled=0""", (channel_id,title))
             return True
 
     def channel_words(self, channel_id, *, review=False):

@@ -1,7 +1,8 @@
 FROM python:3.13-slim
 WORKDIR /opt
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng tesseract-ocr-rus \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng tesseract-ocr-rus fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements-web.txt .
 RUN pip install --no-cache-dir -r requirements-web.txt

@@ -14,7 +14,7 @@ See `proposal.md` for motivation. The current bot polls Telegram with `getUpdate
 - Add a confirmation boundary between OCR output and persistence.
 - Make imports retryable and duplicate-safe.
 
-- **Non-Goals:**
+**Non-Goals:**
 
 - Replacing long polling with webhooks.
 - Full OCR accuracy improvement or machine translation.
@@ -45,10 +45,10 @@ The first version supports one vocabulary item per line in the format `汉字 | 
 
 ## Risks / Trade-offs
 
-- **[Risk]** Telegram channel posts may not expose the administrator who initiated an action → **Mitigation:** require a private setup command or a signed pending setup initiated by an administrator.
+- **[Risk]** Telegram channel posts do not expose the posting administrator as a normal user → **Mitigation:** channel linking/unlinking is done through authenticated Mini App API checks; channel posts only import/review for an enabled, linked channel.
 - **[Risk]** OCR can produce plausible but incorrect pinyin or translation → **Mitigation:** mandatory preview and confirmation; no automatic persistence.
 - **[Risk]** SQLite write contention between web and bot services → **Mitigation:** short transactions, WAL mode, and indexes; keep import work outside the write transaction.
-- **[Risk]** Existing Docker image does not include OCR binaries or language data → **Mitigation:** make OCR dependencies explicit in the image and add a startup/health check before enabling image imports.
+- **[Risk]** Existing Docker image does not include OCR binaries, language data, or CJK fonts for correct Chinese glyph rendering → **Mitigation:** install Tesseract with chi_sim/eng/rus and Noto CJK fonts in the image; assert Chinese glyphs in a synthetic fixture.
 - **[Risk]** Migration deletes old bot-global words → **Mitigation:** run once under the explicit approved destructive migration, retain Mini App personal words, and verify preserved/deleted row counts.
 
 ## Migration Plan

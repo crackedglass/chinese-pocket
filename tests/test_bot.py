@@ -1,4 +1,6 @@
 import tempfile
+import subprocess
+import stat
 import unittest
 from datetime import UTC, datetime
 from unittest.mock import patch
@@ -10,6 +12,7 @@ import sys
 sys.path.insert(0, str(ROOT.parent))
 from chinese_bot.__main__ import Bot
 from chinese_bot.store import Store, parse_words
+from chinese_bot.telegram import TelegramError
 
 
 class FakeApi:
@@ -92,6 +95,17 @@ class BotRegressionTests(unittest.TestCase):
         self.assertEqual(self.store.confirm_import("token", "channel", -100), 0)
         self.assertEqual(len(self.store.dictionary_words(dictionary_id)), 1)
 
+    def test_expired_and_unauthorized_import_confirmation_persists_nothing(self):
+        words = parse_words("书 | shū | книга")
+        dictionary_id = self.store.personal_dictionary(51)
+        self.store.create_import("user", 51, words, "expired", dictionary_id=dictionary_id)
+        with self.store.connect() as db:
+            db.execute("UPDATE imports SET created_at=0 WHERE token='expired'")
+        self.assertEqual(self.store.confirm_import("expired", "user", 51), 0)
+        self.store.create_import("user", 52, words, "private")
+        self.assertEqual(self.store.confirm_import("private", "user", 53), 0)
+        self.assertEqual(self.store.dictionary_words(dictionary_id), [])
+
     def test_channel_review_does_not_leak_global_words(self):
         self.store.add([("猫", "māo", "кот")])
         dictionary_id = self.store.create_dictionary(7, "Channel dictionary")
@@ -115,9 +129,28 @@ class BotRegressionTests(unittest.TestCase):
                                  "new_chat_member": {"status": "left"}}})
         self.assertFalse(self.store.channel(-200)["enabled"])
 
+    def test_image_import_recognizes_two_real_fixture_rows_and_creates_preview(self):
+        fixture = Path(__file__).parent / "fixtures" / "vocabulary-2-rows.png"
+        ocr_output = subprocess.run(["docker", "run", "--rm", "-v", f"{fixture}:/tmp/vocab.png",
+                                     "chinese-pocket-cjk-test", "tesseract", "/tmp/vocab.png",
+                                     "stdout", "-l", "chi_sim+eng", "--psm", "6"],
+                                    stdout=subprocess.PIPE, check=True).stdout
+        recognized = ocr_output.decode().strip()
+        rows = parse_words("\n".join(" | ".join(part.strip() for part in line.split("|"))
+                                 for line in recognized.splitlines()))
+        self.assertEqual(len(rows), 2)
+        self.bot.ocr = lambda _image: recognized
+        self.bot.handle({"chat": {"id": 51, "type": "private"}, "from": {"id": 51},
+                         "caption": "#слово", "photo": [{"file_id": "fixture"}]})
+        self.assertIn("/confirm", self.api.sent[-1]["text"])
+        dictionary_id = self.store.personal_dictionary(51)
+        self.assertEqual(self.store.dictionary_words(dictionary_id), [])
+
     def test_channel_post_requires_enrollment_and_caption(self):
         update = {"channel_post": {"chat": {"id": -300, "type": "channel", "title": "C"},
                                    "caption": "#слово", "photo": [{"file_id": "x"}]}}
+        self.bot.process_update({"my_chat_member": {"chat": {"id": -300, "type": "channel", "title": "C"}, "new_chat_member": {"status": "administrator"}}})
+        self.assertFalse(self.store.channel(-300)["enabled"])
         self.bot.process_update(update)
         self.assertEqual(self.api.sent, [])
         dictionary_id = self.store.create_dictionary(7, "Channel dictionary")
@@ -129,6 +162,37 @@ class BotRegressionTests(unittest.TestCase):
                                  "caption": "ordinary photo", "photo": [{"file_id": "x"}]}})
         self.assertEqual(len(self.api.sent), 1)
 
+    def test_image_import_rejects_empty_and_malformed_ocr_without_saving(self):
+        for result in ("", "not a vocabulary row", "你好 | missing translation"):
+            self.bot.ocr = lambda _image, result=result: result
+            before = len(self.api.sent)
+            self.bot.handle({"chat": {"id": 41, "type": "private"}, "from": {"id": 41},
+                             "caption": "#слово", "photo": [{"file_id": "x"}]})
+            self.assertEqual(len(self.api.sent), before + 1)
+            self.assertNotIn("/confirm", self.api.sent[-1]["text"])
+            dictionary_id = self.store.personal_dictionary(41)
+            self.assertEqual(self.store.dictionary_words(dictionary_id), [])
+
+    def test_image_import_reports_ocr_failure_without_saving(self):
+        def fail(_image):
+            raise OSError("ocr unavailable")
+        self.bot.ocr = fail
+        self.bot.handle({"chat": {"id": 42, "type": "private"}, "from": {"id": 42},
+                         "caption": "#слово", "photo": [{"file_id": "x"}]})
+        self.assertIn("Не удалось распознать фото", self.api.sent[-1]["text"])
+        self.assertEqual(self.store.dictionary_words(self.store.personal_dictionary(42)), [])
+
+    def test_oversized_photo_is_rejected_without_saving(self):
+        class LargePhotoApi(FakeApi):
+            def photo(self, file_id):
+                raise TelegramError(400)
+        api = LargePhotoApi()
+        bot = Bot(api, self.store)
+        bot.handle({"chat": {"id": 43, "type": "private"}, "from": {"id": 43},
+                    "caption": "#слово", "photo": [{"file_id": "x"}]})
+        self.assertIn("Не удалось распознать фото", api.sent[-1]["text"])
+        self.assertEqual(self.store.dictionary_words(self.store.personal_dictionary(43)), [])
+
     def test_migration_discards_bot_global_words_and_keeps_personal_words(self):
         import sqlite3
         legacy_path = Path(tempfile.mktemp(suffix=".sqlite3"))
@@ -136,6 +200,11 @@ class BotRegressionTests(unittest.TestCase):
         db.executescript("""
             CREATE TABLE words(id INTEGER PRIMARY KEY, hanzi TEXT, pinyin TEXT, translation TEXT);
             INSERT INTO words(hanzi,pinyin,translation) VALUES ('旧','jiù','old shared');
+            CREATE TABLE dictionaries(id INTEGER PRIMARY KEY,name TEXT NOT NULL,kind TEXT NOT NULL,owner_id INTEGER,created_at INTEGER);
+            INSERT INTO dictionaries VALUES (99,'Legacy','legacy',NULL,1);
+            CREATE TABLE dictionary_members(dictionary_id INTEGER,telegram_id INTEGER,role TEXT,joined_at INTEGER);
+            CREATE TABLE dictionary_words(id INTEGER PRIMARY KEY,dictionary_id INTEGER,hanzi TEXT,pinyin TEXT,translation TEXT,created_at INTEGER);
+            INSERT INTO dictionary_words VALUES (1,99,'舊','jiù','legacy term',1);
             CREATE TABLE users(telegram_id INTEGER PRIMARY KEY,username TEXT,first_name TEXT,last_name TEXT,created_at INTEGER,last_seen INTEGER);
             INSERT INTO users VALUES (77,'u','User','',1,1);
             CREATE TABLE user_words(id INTEGER PRIMARY KEY,telegram_id INTEGER,hanzi TEXT,pinyin TEXT,translation TEXT,created_at INTEGER);
@@ -144,13 +213,24 @@ class BotRegressionTests(unittest.TestCase):
         db.commit()
         db.close()
         migrated = Store(legacy_path)
+        backup_path = Path(str(legacy_path) + ".pre-dictionary-v1.sqlite3")
+        self.assertTrue(backup_path.exists())
+        self.assertEqual(stat.S_IMODE(backup_path.stat().st_mode), 0o600)
+        with sqlite3.connect(backup_path) as backup:
+            self.assertEqual(backup.execute("SELECT count(*) FROM words").fetchone()[0], 1)
+            self.assertEqual(backup.execute("SELECT count(*) FROM dictionary_words WHERE dictionary_id=99").fetchone()[0], 1)
         self.assertEqual(migrated.words(), [])
         personal = migrated.personal_dictionary(77)
         self.assertEqual([tuple(row)[0] for row in migrated.dictionary_words(personal)], ['你好'])
         with sqlite3.connect(legacy_path) as db:
             self.assertEqual(db.execute("SELECT count(*) FROM words").fetchone()[0], 0)
-            self.assertEqual(db.execute("SELECT count(*) FROM dictionary_words WHERE hanzi='旧'").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT count(*) FROM dictionary_words WHERE hanzi IN ('旧','舊')").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT count(*) FROM dictionaries WHERE kind='legacy'").fetchone()[0], 0)
+        with sqlite3.connect(backup_path) as backup:
+            self.assertEqual(backup.execute("SELECT count(*) FROM words").fetchone()[0], 1)
+            self.assertEqual(backup.execute("SELECT count(*) FROM dictionary_words WHERE dictionary_id=99").fetchone()[0], 1)
         legacy_path.unlink(missing_ok=True)
+        backup_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

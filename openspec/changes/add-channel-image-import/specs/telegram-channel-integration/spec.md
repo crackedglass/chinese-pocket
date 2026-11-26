@@ -7,7 +7,7 @@ Lets channel administrators use the Chinese vocabulary bot in Telegram channels 
 ## ADDED Requirements
 
 ### Requirement: Channel administrators link an enabled channel to a dictionary
-The system SHALL allow an authenticated administrator of a Telegram channel to link that channel to a dictionary they own and SHALL reject linking actions from non-administrators or non-owners.
+The system SHALL allow an authenticated channel administrator who owns a dictionary to link that channel to the dictionary through the Mini App and SHALL reject linking actions from non-administrators or non-owners.
 
 #### Scenario: Channel administrator enables linked dictionary
 - **GIVEN** the bot is an administrator in the channel and the acting user owns the selected dictionary

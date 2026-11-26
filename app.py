@@ -45,6 +45,13 @@ class ChannelLinkIn(BaseModel):
     channel_id: int
     dictionary_id: int
 
+class ChannelIn(BaseModel):
+    channel_id: int
+
+class MembersIn(BaseModel):
+    dictionary_id: int
+
+
 
 def db():
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
@@ -204,6 +211,8 @@ def select_dictionary(payload: SelectDictionaryIn, session: str | None = Cookie(
 @app.post("/api/dictionaries/invite")
 def create_invite(payload: InviteIn, session: str | None = Cookie(default=None)):
     user = current_user(session)
+    if not user.get("username"):
+        raise HTTPException(400, "Для приглашений задайте Telegram username в профиле")
     code = secrets.token_urlsafe(9)
     from .store import Store
     if not Store(DB_PATH).create_invite(payload.dictionary_id, user["id"], code, int(time.time()) + 7 * 86400):
@@ -219,6 +228,16 @@ def redeem_invite(payload: RedeemIn, session: str | None = Cookie(default=None))
     if not dictionary_id:
         raise HTTPException(400, "Код недействителен, просрочен или уже использован")
     return {"dictionary_id": dictionary_id}
+
+
+@app.get("/api/dictionaries/{dictionary_id}/members")
+def list_dictionary_members(dictionary_id: int, session: str | None = Cookie(default=None)):
+    user = current_user(session)
+    from .store import Store
+    members = Store(DB_PATH).members(dictionary_id, user["id"])
+    if members is None:
+        raise HTTPException(403, "Нет доступа к словарю")
+    return {"members": [dict(member) for member in members]}
 
 
 @app.delete("/api/dictionaries/members")
@@ -261,6 +280,28 @@ def unlink_channel(payload: ChannelLinkIn, session: str | None = Cookie(default=
     from .store import Store
     Store(DB_PATH).unlink_channel(payload.channel_id)
     return {"ok": True}
+
+
+@app.get("/api/channels")
+def list_channels(session: str | None = Cookie(default=None)):
+    user = current_user(session)
+    from .store import Store
+    return {"channels": [dict(row) for row in Store(DB_PATH).linked_channels_for_owner(user["id"])]}
+
+
+@app.post("/api/channels/check")
+def check_channel(payload: ChannelIn, session: str | None = Cookie(default=None)):
+    user = current_user(session)
+    if not BOT_TOKEN:
+        raise HTTPException(503, "Telegram bot is not configured")
+    from .telegram import Telegram
+    api = Telegram(BOT_TOKEN)
+    if not api.is_channel_admin(payload.channel_id, user["id"]):
+        raise HTTPException(403, "Пользователь должен быть администратором этого канала")
+    bot = api.call("getMe")
+    if not api.is_channel_admin(payload.channel_id, bot["id"]):
+        raise HTTPException(400, "Сначала добавьте бота администратором канала")
+    return api.call("getChat", chat_id=payload.channel_id)
 
 
 @app.get("/api/words")

@@ -8,19 +8,19 @@
 
 ## 2. Telegram channel integration
 
-- [ ] 2.1 Route channel posts and bot membership updates; verify only enabled channels linked to a dictionary process content.
-- [ ] 2.2 Add authenticated channel link/unlink setup requiring channel administrator and dictionary-owner checks; verify unauthorized link attempts do not change state.
-- [ ] 2.3 Add channel-scoped import and review publishing from the linked dictionary; verify channel content does not mix words from another dictionary.
+- [x] 2.1 Route channel posts and bot membership updates; verify only enabled channels linked to a dictionary process content.
+- [x] 2.2 Add authenticated channel link/unlink setup requiring channel administrator and dictionary-owner checks; verify unauthorized link attempts do not change state.
+- [x] 2.3 Add channel-scoped import and review publishing from the linked dictionary; verify channel content does not mix words from another dictionary.
 
 ## 3. Image vocabulary import
 
-- [ ] 3.1 Add bounded OCR extraction and one-row-per-line parser for `汉字 | pinyin | translation`; verify valid, malformed, empty, oversized, and OCR-failure fixtures.
-- [ ] 3.2 Add pending previews and confirm/cancel flow defaulting private imports to the user's personal dictionary and channel imports to the linked dictionary; verify nothing is saved before confirmation.
-- [ ] 3.3 Implement transactional idempotent confirmation, membership/administrator authorization, and 15-minute expiry; verify repeat, unauthorized, and expired confirmations change no data.
-- [ ] 3.4 Add Telegram help text and image-import examples; verify documented commands and format match the implementation.
+- [x] 3.1 Add bounded OCR extraction and one-row-per-line parser for `汉字 | pinyin | translation`; verify valid, malformed, empty, oversized, and OCR-failure fixtures.
+- [x] 3.2 Add pending previews and confirm/cancel flow defaulting private imports to the user's personal dictionary and channel imports to the linked dictionary; verify nothing is saved before confirmation.
+- [x] 3.3 Implement transactional idempotent confirmation, membership/administrator authorization, and 15-minute expiry; verify repeat, unauthorized, and expired confirmations change no data.
+- [x] 3.4 Add Telegram help text and image-import examples; verify documented commands and format match the implementation.
 
 ## 4. Packaging and integration verification
 
-- [x] 4.1 Add required OCR executable and Chinese language data to the bot image; verify image build and OCR smoke test in the built container.
+- [x] 4.1 Add Tesseract, Chinese/English/Russian language data, and Noto CJK fonts to the image; verify the built container OCRs a synthetic Chinese vocabulary fixture.
 - [x] 4.2 Add regression tests for existing private commands, migrations, dictionary sharing/permissions, channel routing, and image imports; verify legacy behavior is retained.
-- [ ] 4.3 Run the full test suite and Compose validation; verify deployment health and end-to-end test-channel invite, link, image import, and review flows.
+- [ ] 4.3 Run full suite, Compose validation, and deployment health; verify secure pre-migration SQLite backup and migration state, then exercise test-channel invite, link, image import, and review flows.
