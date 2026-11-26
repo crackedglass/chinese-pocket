@@ -21,6 +21,6 @@
 
 ## 4. Packaging and integration verification
 
-- [ ] 4.1 Add required OCR executable and Chinese language data to the bot image; verify image build and OCR smoke test in the built container.
-- [ ] 4.2 Add regression tests for existing private commands, migrations, dictionary sharing/permissions, channel routing, and image imports; verify legacy behavior is retained.
+- [x] 4.1 Add required OCR executable and Chinese language data to the bot image; verify image build and OCR smoke test in the built container.
+- [x] 4.2 Add regression tests for existing private commands, migrations, dictionary sharing/permissions, channel routing, and image imports; verify legacy behavior is retained.
 - [ ] 4.3 Run the full test suite and Compose validation; verify deployment health and end-to-end test-channel invite, link, image import, and review flows.
