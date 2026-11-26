@@ -181,7 +181,11 @@ def create_pre_migration_backup(db):
                 raise RuntimeError("Could not verify pre-migration backup")
         os.chmod(temporary, 0o600)
         os.replace(temporary, backup_path)
-        os.chmod(backup_path, 0o600)
+        fd = os.open(backup_path, os.O_RDONLY)
+        try:
+            os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
         return backup_path
     except Exception:
         Path(temporary).unlink(missing_ok=True)
