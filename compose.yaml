@@ -15,5 +15,15 @@ services:
       timeout: 5s
       retries: 3
 
+  bot:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "chinese_bot"]
+    environment:
+      BOT_DB_PATH: /data/vocabulary.sqlite3
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+    volumes:
+      - chinese_data:/data
+
 volumes:
   chinese_data:
