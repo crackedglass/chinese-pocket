@@ -1,6 +1,7 @@
 services:
   web:
-    build: .
+    image: ghcr.io/crackedglass/chinese-pocket:${IMAGE_TAG:-latest}
+    pull_policy: always
     restart: unless-stopped
     environment:
       BOT_DB_PATH: /data/vocabulary.sqlite3
@@ -16,7 +17,8 @@ services:
       retries: 3
 
   bot:
-    build: .
+    image: ghcr.io/crackedglass/chinese-pocket:${IMAGE_TAG:-latest}
+    pull_policy: always
     restart: unless-stopped
     command: ["python", "-m", "chinese_bot"]
     environment:

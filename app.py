@@ -20,6 +20,11 @@ WEBAPP_URL = os.getenv("WEBAPP_URL", "https://chinese.qlgn.space")
 STATIC = Path(__file__).parent / "web"
 app = FastAPI(title="Chinese Pocket", docs_url=None, redoc_url=None)
 
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}
+
 class WordIn(BaseModel):
     hanzi: str
     pinyin: str
